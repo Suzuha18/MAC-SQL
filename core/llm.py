@@ -29,9 +29,11 @@ def init_log_path(my_log_path):
     api_trace_json_path = os.path.join(dir_name, 'api_trace.json')
 
 
-def api_func(prompt:str):
+def api_func(prompt: str):
     global MODEL_NAME
     print(f"\nUse OpenAI model: {MODEL_NAME}\n")
+
+    # 1. 调用 API (支持 DeepSeek)
     if 'Llama' in MODEL_NAME:
         openai.api_version = None
         openai.api_type = "open_ai"
@@ -41,20 +43,34 @@ def api_func(prompt:str):
             messages=[{"role": "user", "content": prompt}]
         )
     else:
+        # 针对 DeepSeek 或其他 OpenAI 兼容接口
+        # 确保 api_config.py 里已经把 api_type 改为了 "open_ai"
+        # 这里的 engine 参数在标准 OpenAI 库中通常已被 model 参数替代
+        # 但为了兼容旧版库，如果报错可以尝试把 model 改回 engine，或者两个参数都传
         response = openai.ChatCompletion.create(
-            engine=MODEL_NAME,
+            model=MODEL_NAME,  # 关键修改：使用 model 而不是 engine
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1
         )
+
+    # 2. 解析返回结果
     text = response['choices'][0]['message']['content'].strip()
-    prompt_token = response['usage']['prompt_tokens']
-    response_token = response['usage']['completion_tokens']
+
+    # DeepSeek API 返回的 usage 字段可能略有不同，建议加个 .get 防错
+    # 如果 DeepSeek 不返回 usage，这里给个默认值 0
+    usage = response.get('usage', {})
+    prompt_token = usage.get('prompt_tokens', 0)
+    response_token = usage.get('completion_tokens', 0)
+
+    # 3. 必须返回这三个值！
     return text, prompt_token, response_token
+
+
 
 
 def safe_call_llm(input_prompt, **kwargs) -> str:
     """
-    函数功能描述：输入 input_prompt ，返回 模型生成的内容（内部自动错误重试5次，5次错误抛异常）
+    函数功能描述：输入 input_prompt ，返回模型生成的内容（内部自动错误重试5次，5次错误抛异常）
     """
     global MODEL_NAME
     global log_path
