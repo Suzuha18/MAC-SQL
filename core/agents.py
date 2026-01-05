@@ -14,7 +14,11 @@ except:
     print(f"Use func from core.llm in agents.py")
 
 from core.const import *
-from typing import List
+from core.memory import (
+    MemoryStore, MemoryConfig, MemoryCase,
+    get_memory_store, get_memory_config, set_memory_config
+)
+from typing import List, Optional
 from copy import deepcopy
 
 import sqlite3
@@ -598,14 +602,88 @@ class Selector(BaseAgent):
 class Decomposer(BaseAgent):
     """
     Decompose the question and solve them using CoT
+    Enhanced with memory module for retrieving similar successful cases
     """
     name = DECOMPOSER_NAME
     description = "Decompose the question and solve them using CoT"
 
-    def __init__(self, dataset_name):
+    def __init__(self, dataset_name: str, memory_config: Optional[MemoryConfig] = None):
         super().__init__()
         self.dataset_name = dataset_name
         self._message = {}
+        
+        # Memory configuration
+        self.memory_config = memory_config or get_memory_config()
+        self.memory_enabled = self.memory_config.enabled
+        self._memory_store: Optional[MemoryStore] = None
+    
+    @property
+    def memory_store(self) -> Optional[MemoryStore]:
+        """Lazy initialization of memory store"""
+        if self.memory_enabled and self._memory_store is None:
+            self._memory_store = get_memory_store(self.memory_config)
+        return self._memory_store
+    
+    def set_memory_enabled(self, enabled: bool):
+        """Enable or disable memory at runtime"""
+        self.memory_enabled = enabled
+    
+    def _get_memory_examples(self, query: str, evidence: str) -> str:
+        """Retrieve and format similar successful cases from memory"""
+        if not self.memory_enabled or self.memory_store is None:
+            return ""
+        
+        try:
+            cases = self.memory_store.retrieve_success_cases(
+                query=query,
+                evidence=evidence,
+                top_k=self.memory_config.decomposer_top_k
+            )
+            
+            # Filter by minimum similarity threshold
+            filtered_cases = [
+                (case, score) for case, score in cases 
+                if score >= self.memory_config.min_similarity_threshold
+            ]
+            
+            if not filtered_cases:
+                return ""
+            
+            return self.memory_store.format_success_cases_for_prompt(
+                filtered_cases, 
+                max_cases=self.memory_config.decomposer_top_k
+            )
+        except Exception as e:
+            print(f"Warning: Failed to retrieve memory examples: {e}")
+            return ""
+    
+    def _save_success_case(self, query: str, evidence: str, schema_info: str, 
+                          sql: str, qa_pairs: str):
+        """Save successful case to memory"""
+        if not self.memory_enabled or self.memory_store is None:
+            return
+        
+        if not self.memory_config.auto_save_success:
+            return
+        
+        try:
+            # Extract reasoning steps from qa_pairs
+            reasoning_steps = []
+            if qa_pairs:
+                import re
+                steps = re.split(r'Sub question\s*\d+\s*:', qa_pairs)
+                reasoning_steps = [s.strip() for s in steps if s.strip()]
+            
+            self.memory_store.add_success_case(
+                query=query,
+                evidence=evidence,
+                db_schema=schema_info,
+                sql=sql,
+                reasoning_steps=reasoning_steps,
+                metadata={'dataset': self.dataset_name}
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save success case: {e}")
 
     def talk(self, message: dict):
         """
@@ -623,13 +701,36 @@ class Decomposer(BaseAgent):
                                                 message.get('desc_str'), \
                                                 message.get('fk_str')
         
+        # Get memory examples for enhanced prompting
+        memory_examples = self._get_memory_examples(query, evidence or '')
+        
         if self.dataset_name == 'bird':
-            decompose_template = decompose_template_bird
-            prompt = decompose_template.format(query=query, desc_str=schema_info, fk_str=fk_info, evidence=evidence)
+            if memory_examples:
+                # Use memory-enhanced template
+                decompose_template = decompose_template_bird_with_memory
+                prompt = decompose_template.format(
+                    query=query, 
+                    desc_str=schema_info, 
+                    fk_str=fk_info, 
+                    evidence=evidence,
+                    memory_examples=memory_examples
+                )
+            else:
+                decompose_template = decompose_template_bird
+                prompt = decompose_template.format(query=query, desc_str=schema_info, fk_str=fk_info, evidence=evidence)
         else:
             # default use spider template
-            decompose_template = decompose_template_spider
-            prompt = decompose_template.format(query=query, desc_str=schema_info, fk_str=fk_info)
+            if memory_examples:
+                decompose_template = decompose_template_spider_with_memory
+                prompt = decompose_template.format(
+                    query=query, 
+                    desc_str=schema_info, 
+                    fk_str=fk_info,
+                    memory_examples=memory_examples
+                )
+            else:
+                decompose_template = decompose_template_spider
+                prompt = decompose_template.format(query=query, desc_str=schema_info, fk_str=fk_info)
         
         
         ## one shot decompose(first) # fixme
@@ -659,14 +760,114 @@ class Decomposer(BaseAgent):
 
 
 class Refiner(BaseAgent):
+    """
+    Execute SQL and perform validation
+    Enhanced with memory module for retrieving similar failure cases
+    """
     name = REFINER_NAME
-    description = "Execute SQL and preform validation"
+    description = "Execute SQL and perform validation"
 
-    def __init__(self, data_path: str, dataset_name: str):
+    def __init__(self, data_path: str, dataset_name: str, memory_config: Optional[MemoryConfig] = None):
         super().__init__()
         self.data_path = data_path  # path to all databases
         self.dataset_name = dataset_name
         self._message = {}
+        
+        # Memory configuration
+        self.memory_config = memory_config or get_memory_config()
+        self.memory_enabled = self.memory_config.enabled
+        self._memory_store: Optional[MemoryStore] = None
+    
+    @property
+    def memory_store(self) -> Optional[MemoryStore]:
+        """Lazy initialization of memory store"""
+        if self.memory_enabled and self._memory_store is None:
+            self._memory_store = get_memory_store(self.memory_config)
+        return self._memory_store
+    
+    def set_memory_enabled(self, enabled: bool):
+        """Enable or disable memory at runtime"""
+        self.memory_enabled = enabled
+    
+    def _get_memory_examples(self, query: str, evidence: str, error_info: str) -> str:
+        """Retrieve and format similar failure cases from memory"""
+        if not self.memory_enabled or self.memory_store is None:
+            return ""
+        
+        try:
+            cases = self.memory_store.retrieve_failure_cases(
+                query=query,
+                evidence=evidence,
+                error_info=error_info,
+                top_k=self.memory_config.refiner_top_k
+            )
+            
+            # Filter by minimum similarity threshold
+            filtered_cases = [
+                (case, score) for case, score in cases 
+                if score >= self.memory_config.min_similarity_threshold
+            ]
+            
+            if not filtered_cases:
+                return ""
+            
+            return self.memory_store.format_failure_cases_for_prompt(
+                filtered_cases,
+                max_cases=self.memory_config.refiner_top_k
+            )
+        except Exception as e:
+            print(f"Warning: Failed to retrieve memory examples: {e}")
+            return ""
+    
+    def _save_failure_case(self, query: str, evidence: str, schema_info: str,
+                          old_sql: str, error_info: str, new_sql: str = None):
+        """Save failure case to memory"""
+        if not self.memory_enabled or self.memory_store is None:
+            return
+        
+        if not self.memory_config.auto_save_failure:
+            return
+        
+        try:
+            self.memory_store.add_failure_case(
+                query=query,
+                evidence=evidence,
+                db_schema=schema_info,
+                sql=old_sql,
+                error_info=error_info,
+                correction=new_sql,
+                correction_explanation=None,
+                metadata={'dataset': self.dataset_name}
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save failure case: {e}")
+    
+    def _save_to_decomposer_memory(self, query: str, evidence: str, schema_info: str,
+                                   final_sql: str, qa_pairs: str):
+        """Save successful correction as a success case for Decomposer"""
+        if not self.memory_enabled or self.memory_store is None:
+            return
+        
+        if not self.memory_config.auto_save_success:
+            return
+        
+        try:
+            reasoning_steps = []
+            if qa_pairs:
+                import re
+                steps = re.split(r'Sub question\s*\d+\s*:', qa_pairs)
+                reasoning_steps = [s.strip() for s in steps if s.strip()]
+            
+            self.memory_store.add_success_case(
+                query=query,
+                evidence=evidence,
+                db_schema=schema_info,
+                sql=final_sql,
+                reasoning_steps=reasoning_steps,
+                metadata={'dataset': self.dataset_name, 'source': 'refiner_correction'}
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save success case from refiner: {e}")
 
     @func_set_timeout(120)
     def _execute_sql(self, sql: str, db_id: str) -> dict:
@@ -728,18 +929,52 @@ class Refiner(BaseAgent):
         sql_arg = add_prefix(error_info.get('sql'))
         sqlite_error = error_info.get('sqlite_error')
         exception_class = error_info.get('exception_class')
-        prompt = refiner_template.format(query=query, evidence=evidence, desc_str=schema_info, \
-                                       fk_str=fk_info, sql=sql_arg, sqlite_error=sqlite_error, \
-                                        exception_class=exception_class)
+        
+        # Get memory examples for enhanced prompting
+        memory_examples = self._get_memory_examples(query, evidence or '', sqlite_error)
+        
+        if memory_examples:
+            # Use memory-enhanced template
+            prompt = refiner_template_with_memory.format(
+                query=query, 
+                evidence=evidence, 
+                desc_str=schema_info,
+                fk_str=fk_info, 
+                sql=sql_arg, 
+                sqlite_error=sqlite_error,
+                exception_class=exception_class,
+                memory_examples=memory_examples
+            )
+        else:
+            prompt = refiner_template.format(
+                query=query, 
+                evidence=evidence, 
+                desc_str=schema_info,
+                fk_str=fk_info, 
+                sql=sql_arg, 
+                sqlite_error=sqlite_error,
+                exception_class=exception_class
+            )
 
         word_info = extract_world_info(self._message)
         reply = LLM_API_FUC(prompt, **word_info)
         res = parse_sql_from_string(reply)
+        
+        # Save failure case to memory
+        self._save_failure_case(
+            query=query,
+            evidence=evidence,
+            schema_info=schema_info,
+            old_sql=sql_arg,
+            error_info=sqlite_error,
+            new_sql=res
+        )
+        
         return res
 
     def talk(self, message: dict):
         """
-        Execute SQL and preform validation
+        Execute SQL and perform validation
         :param message: {"query": user_query,
                         "evidence": extra_info,
                         "desc_str": description of db schema,
@@ -764,6 +999,7 @@ class Refiner(BaseAgent):
             return
         
         is_timeout = False
+        error_info = {}
         try:
             error_info = self._execute_sql(old_sql, db_id)
         except Exception as e:
@@ -777,6 +1013,16 @@ class Refiner(BaseAgent):
             message['try_times'] = message.get('try_times', 0) + 1
             message['pred'] = old_sql
             message['send_to'] = SYSTEM_NAME
+            
+            # Save successful SQL to memory for Decomposer
+            if not is_timeout and message.get('fixed', False):
+                self._save_to_decomposer_memory(
+                    query=query,
+                    evidence=evidence,
+                    schema_info=schema_info,
+                    final_sql=old_sql,
+                    qa_pairs=message.get('qa_pairs', '')
+                )
         else:
             new_sql = self._refine(query, evidence, schema_info, fk_info, error_info)
             message['try_times'] = message.get('try_times', 0) + 1

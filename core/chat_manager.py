@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from core.agents import Selector, Decomposer, Refiner
 from core.const import MAX_ROUND, SYSTEM_NAME, SELECTOR_NAME, DECOMPOSER_NAME, REFINER_NAME
+from core.memory import MemoryConfig, set_memory_config, reset_memory_store
 
 INIT_LOG__PATH_FUNC = None
 LLM_API_FUC = None
@@ -20,17 +21,27 @@ from pprint import pprint
 
 
 class ChatManager(object):
-    def __init__(self, data_path: str, tables_json_path: str, log_path: str, model_name: str, dataset_name:str, lazy: bool=False, without_selector: bool=False):
+    def __init__(self, data_path: str, tables_json_path: str, log_path: str, model_name: str, dataset_name: str, 
+                 lazy: bool = False, without_selector: bool = False, memory_config: MemoryConfig = None):
         self.data_path = data_path  # root path to database dir, including all databases
         self.tables_json_path = tables_json_path # path to table description json file
         self.log_path = log_path  # path to record important printed content during running
         self.model_name = model_name  # name of base LLM called by agent
         self.dataset_name = dataset_name
+        
+        # Setup memory configuration
+        if memory_config is not None:
+            set_memory_config(memory_config)
+            self.memory_config = memory_config
+        else:
+            # Default: memory disabled
+            self.memory_config = MemoryConfig(enabled=False)
+        
         self.ping_network()
         self.chat_group = [
             Selector(data_path=self.data_path, tables_json_path=self.tables_json_path, model_name=self.model_name, dataset_name=dataset_name, lazy=lazy, without_selector=without_selector),
-            Decomposer(dataset_name=dataset_name),
-            Refiner(data_path=self.data_path, dataset_name=dataset_name)
+            Decomposer(dataset_name=dataset_name, memory_config=self.memory_config),
+            Refiner(data_path=self.data_path, dataset_name=dataset_name, memory_config=self.memory_config)
         ]
         INIT_LOG__PATH_FUNC(log_path)
 

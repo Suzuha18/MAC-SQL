@@ -23,3 +23,8 @@ dev_databases.zip
 train_databases/
 database/
 *.sqlite
+data
+
+# Memory store (contains extracted training cases)
+memory_store/
+test_memory_store/

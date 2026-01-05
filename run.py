@@ -3,6 +3,7 @@ from core.utils import *
 from core.chat_manager import ChatManager
 from core.utils import get_gold_columns
 from core.const import SYSTEM_NAME
+from core.memory import MemoryConfig
 from tqdm import tqdm
 import time
 import argparse
@@ -72,14 +73,15 @@ def init_bird_message(idx: int, item: dict, db_path: str=None, use_gold_schema: 
     return user_message
 
 
-def run_batch(dataset_name, input_file, output_file, db_path, tables_json_path, start_pos=0, log_file=None, dataset_mode='dev', use_gold_schema=False, without_selector=False):
+def run_batch(dataset_name, input_file, output_file, db_path, tables_json_path, start_pos=0, log_file=None, dataset_mode='dev', use_gold_schema=False, without_selector=False, memory_config=None, max_samples=-1):
     chat_manager = ChatManager(data_path=db_path,
                                tables_json_path=tables_json_path,
                                log_path=log_file,
                                dataset_name=dataset_name,
                                model_name='gpt-4',
                                lazy=True,
-                               without_selector=without_selector)
+                               without_selector=without_selector,
+                               memory_config=memory_config)
     # load dataset
     batch = load_json_file(input_file)
     # resume from last checkpoint
@@ -116,6 +118,12 @@ def run_batch(dataset_name, input_file, output_file, db_path, tables_json_path, 
     
     if exclude_db_json_cnt:
         print(f"excluded {exclude_db_json_cnt} excluded db json data")
+    
+    # Limit samples if specified
+    if max_samples > 0 and len(new_batch) > max_samples:
+        new_batch = new_batch[:max_samples]
+        print(f"Limited to {max_samples} samples for testing")
+    
     time.sleep(2)
     batch = new_batch
 
@@ -203,7 +211,37 @@ if __name__ == "__main__":
     parser.add_argument('--start_pos', type=int, default=0, help='start position of a batch')
     parser.add_argument('--use_gold_schema', action='store_true', default=False)
     parser.add_argument('--without_selector', action='store_true', default=False)
+    parser.add_argument('--max_samples', type=int, default=-1, help='Maximum number of samples to process (-1 for all)')
+    # RAG Memory arguments
+    parser.add_argument('--enable_rag', action='store_true', default=False, help='Enable RAG memory module')
+    parser.add_argument('--memory_config', type=str, default=None, help='Path to memory config JSON file')
+    parser.add_argument('--memory_storage_path', type=str, default='./memory_store', help='Path to memory storage directory')
+    parser.add_argument('--retrieval_strategy', type=str, default='keyword', choices=['keyword', 'embedding', 'hybrid'], help='RAG retrieval strategy')
+    parser.add_argument('--decomposer_top_k', type=int, default=2, help='Number of success cases for Decomposer')
+    parser.add_argument('--refiner_top_k', type=int, default=2, help='Number of failure cases for Refiner')
     args = parser.parse_args()
+    
+    # Build memory configuration
+    memory_config = None
+    if args.enable_rag:
+        if args.memory_config:
+            # Load from config file
+            memory_config = MemoryConfig.from_json_file(args.memory_config)
+            print(f"Loaded memory config from {args.memory_config}")
+        else:
+            # Build from command line arguments
+            memory_config = MemoryConfig(
+                enabled=True,
+                storage_path=args.memory_storage_path,
+                retrieval_strategy=args.retrieval_strategy,
+                dataset_name=args.dataset_name,  # Auto-select dataset-specific files
+                decomposer_top_k=args.decomposer_top_k,
+                refiner_top_k=args.refiner_top_k,
+                auto_save_success=False,  # Don't auto-save during inference
+                auto_save_failure=False
+            )
+            print(f"RAG enabled: strategy={args.retrieval_strategy}, dataset={args.dataset_name}")
+    
     # 打印args中的键值对
     for key, value in vars(args).items():
         print(f"{key}: {value}")
@@ -225,5 +263,7 @@ if __name__ == "__main__":
         log_file=args.log_file,
         start_pos=args.start_pos,
         use_gold_schema=args.use_gold_schema,
-        without_selector=args.without_selector
+        without_selector=args.without_selector,
+        memory_config=memory_config,
+        max_samples=args.max_samples
     )

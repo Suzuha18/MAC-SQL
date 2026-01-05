@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "storage_path": "./memory_store",
+  "retrieval_strategy": "keyword",
+  "embedding_model": "all-MiniLM-L6-v2",
+  "max_cases": 1000,
+  "decomposer_top_k": 3,
+  "refiner_top_k": 3,
+  "min_similarity_threshold": 0.1,
+  "auto_save_success": true,
+  "auto_save_failure": true,
+  "dataset_name": null,
+  "success_cases_file": null,
+  "failure_cases_file": null
+}
