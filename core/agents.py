@@ -546,20 +546,87 @@ class Selector(BaseAgent):
                db_schema: str,
                db_fk: str,
                evidence: str = None,
+               use_perception: bool = True,
                ) -> dict:
-        prompt = selector_template.format(db_id=db_id, query=query, evidence=evidence, desc_str=db_schema, fk_str=db_fk)
+        """
+        Prune database schema and optionally perform question rewriting and complexity assessment.
+        
+        Returns:
+            dict: Contains 'schema_filter', 'rewritten_question', 'complexity', and 'thought_process'
+                  For fallback cases, only 'schema_filter' is guaranteed.
+        """
+        # Choose template based on mode
+        if use_perception:
+            prompt = selector_perception_template.format(
+                db_id=db_id, query=query, evidence=evidence, 
+                desc_str=db_schema, fk_str=db_fk
+            )
+        else:
+            prompt = selector_template.format(
+                db_id=db_id, query=query, evidence=evidence, 
+                desc_str=db_schema, fk_str=db_fk
+            )
+        
         word_info = extract_world_info(self._message)
         reply = LLM_API_FUC(prompt, **word_info)
-        extracted_schema_dict = parse_json(reply)
-        return extracted_schema_dict
+        parsed_result = parse_json(reply)
+        
+        # Initialize result with defaults
+        result = {
+            'schema_filter': {},
+            'rewritten_question': None,
+            'complexity': None,
+            'thought_process': None
+        }
+        
+        # Handle different response formats with Fallback mechanism
+        if parsed_result is None:
+            # Parse failed completely, return empty schema filter
+            print(f"[Selector Warning] JSON parse failed, using empty schema filter")
+            return result
+        
+        if 'schema_filter' in parsed_result:
+            # New format: full perception response
+            result['schema_filter'] = parsed_result.get('schema_filter', {})
+            result['rewritten_question'] = parsed_result.get('rewritten_question', None)
+            result['complexity'] = parsed_result.get('complexity', None)
+            result['thought_process'] = parsed_result.get('thought_process', None)
+            
+            # Validate complexity value
+            if result['complexity'] not in ['SIMPLE', 'COMPLEX', None]:
+                print(f"[Selector Warning] Invalid complexity value: {result['complexity']}, setting to None")
+                result['complexity'] = None
+        else:
+            # Old format fallback: direct schema dict (backward compatibility)
+            # Check if it looks like a schema filter (table names as keys)
+            is_schema_dict = all(
+                isinstance(v, (str, list)) and 
+                (v in ['keep_all', 'drop_all'] or isinstance(v, list))
+                for v in parsed_result.values()
+            ) if parsed_result else False
+            
+            if is_schema_dict:
+                result['schema_filter'] = parsed_result
+                print(f"[Selector Info] Fallback to legacy format (direct schema dict)")
+            else:
+                print(f"[Selector Warning] Unexpected response format, using empty schema filter")
+        
+        return result
 
     def talk(self, message: dict):
         """
+        Perception & Routing Module: Performs schema pruning, question rewriting, and complexity assessment.
+        
         :param message: {"db_id": database_name,
                          "query": user_query,
                          "evidence": extra_info,
                          "extracted_schema": None if no preprocessed result found}
-        :return: extracted database schema {"desc_str": extracted_db_schema, "fk_str": foreign_keys_of_db}
+        :return: Updates message with:
+                 - "desc_str": extracted_db_schema
+                 - "fk_str": foreign_keys_of_db  
+                 - "extracted_schema": schema filter dict
+                 - "rewritten_question": disambiguated question (if available)
+                 - "complexity": "SIMPLE" or "COMPLEX" (if available)
         """
         if message['send_to'] != self.name: return
         self._message = message
@@ -570,26 +637,64 @@ class Selector(BaseAgent):
         use_gold_schema = False
         if ext_sch:
             use_gold_schema = True
+        
+        # Get initial db schema with Value Examples (important for DART-SQL style rewriting)
         db_schema, db_fk, chosen_db_schem_dict = self._get_db_desc_str(db_id=db_id, extracted_schema=ext_sch, use_gold_schema=use_gold_schema)
         need_prune = self._is_need_prune(db_id, db_schema)
         if self.without_selector:
             need_prune = False
+        
+        # Initialize new fields with defaults
+        message['rewritten_question'] = None
+        message['complexity'] = None
+        
         if ext_sch == {} and need_prune:
-            
             try:
-                raw_extracted_schema_dict = self._prune(db_id=db_id, query=query, db_schema=db_schema, db_fk=db_fk, evidence=evidence)
+                # Call _prune with perception enabled to get full analysis
+                prune_result = self._prune(
+                    db_id=db_id, 
+                    query=query, 
+                    db_schema=db_schema,  # Contains Value Examples for content-aware rewriting
+                    db_fk=db_fk, 
+                    evidence=evidence,
+                    use_perception=True
+                )
             except Exception as e:
-                print(e)
-                raw_extracted_schema_dict = {}
+                print(f"[Selector Error] _prune failed: {e}")
+                prune_result = {
+                    'schema_filter': {},
+                    'rewritten_question': None,
+                    'complexity': None,
+                    'thought_process': None
+                }
             
-            print(f"query: {message['query']}\n")
-            db_schema_str, db_fk, chosen_db_schem_dict = self._get_db_desc_str(db_id=db_id, extracted_schema=raw_extracted_schema_dict)
+            # Extract schema filter (backward compatible field name)
+            raw_extracted_schema_dict = prune_result.get('schema_filter', {})
+            
+            print(f"query: {message['query']}")
+            if prune_result.get('rewritten_question'):
+                print(f"rewritten_question: {prune_result['rewritten_question']}")
+            if prune_result.get('complexity'):
+                print(f"complexity: {prune_result['complexity']}\n")
+            
+            # Apply schema filter to get pruned schema description
+            db_schema_str, db_fk, chosen_db_schem_dict = self._get_db_desc_str(
+                db_id=db_id, 
+                extracted_schema=raw_extracted_schema_dict
+            )
 
+            # Update message with all results
             message['extracted_schema'] = raw_extracted_schema_dict
             message['chosen_db_schem_dict'] = chosen_db_schem_dict
             message['desc_str'] = db_schema_str
             message['fk_str'] = db_fk
             message['pruned'] = True
+            
+            # New perception fields
+            message['rewritten_question'] = prune_result.get('rewritten_question')
+            message['complexity'] = prune_result.get('complexity')
+            message['thought_process'] = prune_result.get('thought_process')
+            
             message['send_to'] = DECOMPOSER_NAME
         else:
             message['chosen_db_schem_dict'] = chosen_db_schem_dict

@@ -314,11 +314,28 @@ def parse_json(text: str) -> dict:
         try:
             # 解析 JSON 字符串
             json_data = json.loads(json_string)
-            valid = check_selector_response(json_data)
-            if valid:
-                return json_data
+            
+            # Check if it's the new perception format (has schema_filter key)
+            if 'schema_filter' in json_data:
+                # New perception format - validate schema_filter part only
+                schema_filter = json_data.get('schema_filter', {})
+                if isinstance(schema_filter, dict):
+                    valid = check_selector_response(schema_filter)
+                    if valid:
+                        return json_data
+                    else:
+                        # schema_filter is invalid, but return other fields
+                        json_data['schema_filter'] = {}
+                        return json_data
+                else:
+                    return json_data
             else:
-                return {}
+                # Old format - direct schema dict
+                valid = check_selector_response(json_data)
+                if valid:
+                    return json_data
+                else:
+                    return {}
         except:
             print(f"error: parse json error!\n")
             print(f"json_string: {json_string}\n\n")

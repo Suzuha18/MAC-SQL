@@ -105,6 +105,139 @@ Here is a new example, please start answering:
 """
 
 
+# New Perception & Routing Module Template with Chain-of-Thought
+selector_perception_template = """
+As an experienced database administrator and query analyst, your task is to analyze a user question and database schema to perform THREE tasks in strict order:
+1. **Question Rewriting**: Disambiguate the user question using the database content (Value Examples)
+2. **Complexity Assessment**: Determine if the query is SIMPLE or COMPLEX
+3. **Schema Filtering**: Identify relevant tables and columns
+
+You MUST follow the Chain-of-Thought process and output a JSON with fields in EXACTLY this order.
+
+[Instructions]:
+
+**Step 1 - Analyze & Think (thought_process)**:
+- Identify key entities and attributes mentioned in the question
+- Map them to specific tables and columns in the schema
+- Note any ambiguous terms that need clarification using Value Examples
+
+**Step 2 - Rewrite Question (rewritten_question)**:
+- Use the "Value examples" from the schema to disambiguate vague terms
+- Replace informal references with exact column values or database terminology
+- Make the question precise enough for direct SQL generation
+- If no ambiguity exists, keep the question similar but clearer
+
+**Step 3 - Assess Complexity (complexity)**:
+- "SIMPLE": Query involves 1-2 tables, basic filtering, no subqueries needed
+- "COMPLEX": Query involves 3+ tables, aggregations, subqueries, window functions, or complex joins
+
+**Step 4 - Filter Schema (schema_filter)**:
+- For tables with ≤10 columns that are relevant: use "keep_all"
+- For completely irrelevant tables: use "drop_all"
+- For large tables (>10 columns): list only the top 6 relevant columns
+- Always keep at least 3 tables
+
+[Output Format]:
+You MUST output a valid JSON object with fields in this EXACT order:
+```json
+{{
+    "thought_process": "<Your step-by-step analysis here>",
+    "rewritten_question": "<Disambiguated question based on database content>",
+    "complexity": "SIMPLE" or "COMPLEX",
+    "schema_filter": {{
+        "table_name_A": "keep_all",
+        "table_name_B": "drop_all",
+        "table_name_C": ["col_1", "col_2", "col_3"]
+    }}
+}}
+```
+
+==========
+【Example】
+
+【DB_ID】 banking_system
+【Schema】
+# Table: account
+[
+  (account_id, the id of the account. Value examples: [11382, 11362, 2, 1, 2367].),
+  (district_id, location of branch. Value examples: [77, 76, 2, 1, 39].),
+  (frequency, frequency of the acount. Value examples: ['POPLATEK MESICNE', 'POPLATEK TYDNE', 'POPLATEK PO OBRATU'].),
+  (date, the creation date of the account. Value examples: ['1997-12-29', '1997-12-28'].)
+]
+# Table: client
+[
+  (client_id, the unique number. Value examples: [13998, 13971, 2, 1, 2839].),
+  (gender, gender. Value examples: ['M', 'F']. And F：female . M：male ),
+  (birth_date, birth date. Value examples: ['1987-09-27', '1986-08-13'].),
+  (district_id, location of branch. Value examples: [77, 76, 2, 1, 39].)
+]
+# Table: loan
+[
+  (loan_id, the id number identifying the loan data. Value examples: [4959, 4960, 4961].),
+  (account_id, the id number identifying the account. Value examples: [10, 80, 55, 43].),
+  (date, the date when the loan is approved. Value examples: ['1998-07-12', '1998-04-19'].),
+  (amount, the loan amount. Value examples: [1567, 7877, 9988].),
+  (duration, loan duration in months. Value examples: [60, 48, 24, 12, 36].),
+  (payments, monthly payment amount. Value examples: [3456, 8972, 9845].),
+  (status, loan status. Value examples: ['C', 'A', 'D', 'B']. And A: running, no problems; B: running, in debt; C: finished, no problems; D: finished, not paid)
+]
+# Table: district
+[
+  (district_id, location of branch. Value examples: [77, 76].),
+  (A2, area in square kilometers. Value examples: [50.5, 48.9].),
+  (A4, number of inhabitants. Value examples: [95907, 95616].),
+  (A5, number of households. Value examples: [35678, 34892].),
+  (A6, literacy rate. Value examples: [95.6, 92.3, 89.7].),
+  (A7, number of entrepreneurs. Value examples: [1234, 1456].),
+  (A8, number of cities. Value examples: [5, 4].),
+  (A9, number of schools. Value examples: [15, 12, 10].),
+  (A10, number of hospitals. Value examples: [8, 6, 4].),
+  (A11, average salary. Value examples: [12541, 11277].),
+  (A12, poverty rate. Value examples: [12.4, 9.8].),
+  (A13, unemployment rate. Value examples: [8.2, 7.9].),
+  (A15, number of crimes. Value examples: [256, 189].)
+]
+【Foreign keys】
+client.`district_id` = district.`district_id`
+【Question】
+What is the gender of the youngest client who opened account in the lowest average salary branch?
+【Evidence】
+Later birthdate refers to younger age; A11 refers to average salary
+
+【Answer】
+```json
+{{
+    "thought_process": "1. The question asks about 'gender' which maps to client.gender column. 2. 'Youngest client' relates to birth_date in client table - later date means younger. 3. 'Opened account' requires joining client with account table. 4. 'Lowest average salary branch' refers to district.A11 (average salary) - need to find minimum. 5. Need to join client->account and client->district. The loan table is not relevant.",
+    "rewritten_question": "Find the gender (from client.gender where 'M'=male, 'F'=female) of the client with the latest birth_date who has an account in the district with the minimum A11 (average salary) value.",
+    "complexity": "COMPLEX",
+    "schema_filter": {{
+        "account": "keep_all",
+        "client": "keep_all",
+        "loan": "drop_all",
+        "district": ["district_id", "A11", "A2", "A4", "A6", "A7"]
+    }}
+}}
+```
+Question Solved.
+
+==========
+
+Here is a new question, please analyze step by step:
+
+【DB_ID】 {db_id}
+【Schema】
+{desc_str}
+【Foreign keys】
+{fk_str}
+【Question】
+{query}
+【Evidence】
+{evidence}
+
+【Answer】
+"""
+
+
 subq_pattern = r"Sub question\s*\d+\s*:"
 
 
