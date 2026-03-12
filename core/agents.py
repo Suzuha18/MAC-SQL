@@ -580,9 +580,9 @@ class Selector(BaseAgent):
         }
         
         # Handle different response formats with Fallback mechanism
-        if parsed_result is None or parsed_result == {}:
+        if parsed_result is None:
             # Parse failed completely, return empty schema filter
-            print(f"[Selector Warning] JSON parse failed or empty, using empty schema filter")
+            print(f"[Selector Warning] JSON parse failed, using empty schema filter")
             return result
         
         if 'schema_filter' in parsed_result:
@@ -1004,19 +1004,9 @@ class Refiner(BaseAgent):
             }
 
     def _is_need_refine(self, exec_result: dict):
-        # Check for execution errors first (applies to all datasets)
-        if 'sqlite_error' in exec_result and exec_result['sqlite_error']:
-            return True
-        
         # spider exist dirty values, even gold sql execution result is None
-        # But we should still refine if there's no data or empty results
         if self.dataset_name == 'spider':
             if 'data' not in exec_result:
-                return True
-            data = exec_result.get('data', None)
-            # Also refine if result is empty (likely wrong query)
-            if data is None or len(data) == 0:
-                exec_result['sqlite_error'] = 'no data selected (empty result)'
                 return True
             return False
         

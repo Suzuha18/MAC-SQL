@@ -190,18 +190,28 @@ def get_gold_columns(idx, db_path) -> dict:
 #     return json.loads(jstr)
 
 
-# NOTE: The actual parse_json implementation is defined later in this file (around line 305)
-# This commented block was a debug stub that has been removed to avoid confusion.
-# def parse_json(res: str) -> dict:
-#     # todo: for debug
-#     return {}
+# parse json output
+def parse_json(res: str) -> dict:
+    # lines = res.split('\n')
+    # start_idx, end_idx = -1, -1
+    # for idx in range(0, len(lines)):
+    #     if '```json' in lines[idx]:
+    #         start_idx = idx
+    #         break
+    # if start_idx == -1: return {}
+    # for idx in range(start_idx + 1, len(lines)):
+    #     if '```' in lines[idx]:
+    #         end_idx = idx
+    #         break
+    # if end_idx == -1: return {}
+    # jstr = " ".join(lines[start_idx + 1: end_idx])
+    # return json.loads(jstr)
+    # todo: for debug
+    return {}
 
 
 # check if valid format
 def check_selector_response(json_data: Dict) -> bool:
-    """Check if json_data is a valid selector response (schema filter dict)."""
-    if not json_data:  # Empty dict is invalid
-        return False
     FLAGS = ['keep_all', 'drop_all']
     for k, v in json_data.items():
         if isinstance(v, str):
@@ -293,15 +303,6 @@ def save_jsonl_file(path, data):
 
 
 def parse_json(text: str) -> dict:
-    """
-    Parse JSON from LLM response text.
-    
-    Args:
-        text: LLM response that may contain ```json ... ``` block
-        
-    Returns:
-        dict: Parsed JSON data, or None if parsing failed
-    """
     # 查找字符串中的 JSON 块
     start = text.find("```json")
     end = text.find("```", start + 7)
@@ -334,13 +335,13 @@ def parse_json(text: str) -> dict:
                 if valid:
                     return json_data
                 else:
-                    return None  # Invalid format
-        except Exception as e:
-            print(f"error: parse json error! {e}\n")
-            print(f"json_string: {json_string[:200]}...\n\n")
-            return None
+                    return {}
+        except:
+            print(f"error: parse json error!\n")
+            print(f"json_string: {json_string}\n\n")
+            pass
     
-    return None  # No JSON block found
+    return {}
 
 
 def parse_sql(res: str) -> str:
