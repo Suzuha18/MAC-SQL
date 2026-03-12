@@ -1,10 +1,24 @@
 @echo off
 chcp 65001
 
-@REM default using gpt-4-32k
+@REM ==================== API Provider 切换说明 ====================
+@REM 方式1: 命令行参数 --api_provider qwen --model_name qwen-plus
+@REM 方式2: 环境变量   set API_PROVIDER=qwen & set OPENAI_API_KEY=sk-xxx
+@REM 支持: deepseek / qwen / openai
+@REM ================================================================
 
-@REM Generate SQL on foo dataset for env test
-@REM This will get ./outputs/foo/output_bird.json and ./outputs/foo/predict_test.json
+@REM ===== 使用 Qwen (通义千问) 跑 foo 测试 =====
+@REM python ./run.py --dataset_name "bird" ^
+@REM    --dataset_mode="test" ^
+@REM    --input_file "./data/foo/test.json" ^
+@REM    --db_path "./data/foo/test_databases" ^
+@REM    --tables_json_path "./data/foo/test_tables.json" ^
+@REM    --output_file "./outputs/foo_qwen/output_bird.json" ^
+@REM    --log_file "./outputs/foo_qwen/log.txt" ^
+@REM    --api_provider qwen ^
+@REM    --model_name qwen-plus
+
+@REM ===== 使用 DeepSeek 跑 foo 测试 (默认) =====
 python ./run.py --dataset_name "bird" ^
    --dataset_mode="test" ^
    --input_file "./data/foo/test.json" ^

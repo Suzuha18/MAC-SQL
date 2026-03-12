@@ -4,6 +4,7 @@ from core.chat_manager import ChatManager
 from core.utils import get_gold_columns
 from core.const import SYSTEM_NAME
 from core.memory import MemoryConfig
+from core.api_config import apply_provider_config
 from tqdm import tqdm
 import time
 import argparse
@@ -212,6 +213,13 @@ if __name__ == "__main__":
     parser.add_argument('--use_gold_schema', action='store_true', default=False)
     parser.add_argument('--without_selector', action='store_true', default=False)
     parser.add_argument('--max_samples', type=int, default=-1, help='Maximum number of samples to process (-1 for all)')
+    # API provider arguments
+    parser.add_argument('--api_provider', type=str, default=None, choices=['deepseek', 'qwen', 'openai'],
+                        help='API provider: deepseek / qwen / openai (default: env API_PROVIDER or deepseek)')
+    parser.add_argument('--model_name', type=str, default=None,
+                        help='Model name to use, e.g. qwen-plus, deepseek-chat, gpt-4 (default: provider default)')
+    parser.add_argument('--api_key', type=str, default=None,
+                        help='API key (default: env OPENAI_API_KEY)')
     # RAG Memory arguments
     parser.add_argument('--enable_rag', action='store_true', default=False, help='Enable RAG memory module')
     parser.add_argument('--memory_config', type=str, default=None, help='Path to memory config JSON file')
@@ -242,6 +250,14 @@ if __name__ == "__main__":
             )
             print(f"RAG enabled: strategy={args.retrieval_strategy}, dataset={args.dataset_name}")
     
+    # 动态切换 API provider / model
+    if args.api_provider or args.model_name or args.api_key:
+        apply_provider_config(
+            provider=args.api_provider,
+            model_name=args.model_name,
+            api_key=args.api_key
+        )
+
     # 打印args中的键值对
     for key, value in vars(args).items():
         print(f"{key}: {value}")

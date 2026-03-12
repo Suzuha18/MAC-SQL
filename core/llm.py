@@ -31,9 +31,10 @@ def init_log_path(my_log_path):
 
 def api_func(prompt: str):
     global MODEL_NAME
-    print(f"\nUse OpenAI model: {MODEL_NAME}\n")
+    global API_PROVIDER
+    print(f"\n[api_func] provider={API_PROVIDER}, model={MODEL_NAME}\n")
 
-    # 1. 调用 API (支持 DeepSeek)
+    # ---------- 本地 Llama 模型 ----------
     if 'Llama' in MODEL_NAME:
         openai.api_version = None
         openai.api_type = "open_ai"
@@ -43,26 +44,26 @@ def api_func(prompt: str):
             messages=[{"role": "user", "content": prompt}]
         )
     else:
-        # 针对 DeepSeek 或其他 OpenAI 兼容接口
-        # 确保 api_config.py 里已经把 api_type 改为了 "open_ai"
-        # 这里的 engine 参数在标准 OpenAI 库中通常已被 model 参数替代
-        # 但为了兼容旧版库，如果报错可以尝试把 model 改回 engine，或者两个参数都传
-        response = openai.ChatCompletion.create(
-            model=MODEL_NAME,  # 关键修改：使用 model 而不是 engine
+        # ---------- DeepSeek / Qwen / OpenAI 等兼容接口统一走这里 ----------
+        # Qwen(DashScope) 和 DeepSeek 都兼容 OpenAI chat completions 格式
+        kwargs = dict(
+            model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.1
+            temperature=0.1,
         )
+        # Qwen 的某些模型支持 enable_search 等额外参数，按需添加
+        # if API_PROVIDER == "qwen":
+        #     kwargs["extra_body"] = {"enable_search": True}
 
-    # 2. 解析返回结果
+        response = openai.ChatCompletion.create(**kwargs)
+
+    # ---------- 解析返回结果 ----------
     text = response['choices'][0]['message']['content'].strip()
 
-    # DeepSeek API 返回的 usage 字段可能略有不同，建议加个 .get 防错
-    # 如果 DeepSeek 不返回 usage，这里给个默认值 0
     usage = response.get('usage', {})
     prompt_token = usage.get('prompt_tokens', 0)
     response_token = usage.get('completion_tokens', 0)
 
-    # 3. 必须返回这三个值！
     return text, prompt_token, response_token
 
 
